@@ -68,6 +68,17 @@ and output, and compile without graph breaks).
 Outputs: `model`, `prompt`, `width`/`height` (the canvas size, for the empty latent node) and
 `regions` (the boxes plus the canvas size, for *MOSS-Image Character Masks*).
 
+Optional inputs (this fork, *ahx*):
+
+- `width_input`, `height_input`: the canvas size from another node (a resolution or image-size node). They
+  replace the size set in the Canvas panel, rounded down to whole 16 px cells like the empty latent node;
+  the panel then shows the size used, read-only (read live from a primitive such as *Int* or from a
+  *Resolution Selector*, otherwise updated after each run). Boxes keep their pixel positions from the centre when the size changes.
+- `background`: an image drawn behind the boxes in the editor, in place of its *Background* file. From a
+  *Load Image* or *Load Image (from Outputs)* node it shows right away; from any other node, after a run.
+  A drawing aid only, it never affects the output, but like any input, changing the image re-runs this
+  node and everything after it.
+
 Settings: all of them are in the editor's **Canvas** panel (shown when no box is selected). On the
 node they are ordinary inputs that the editor hides, so they are saved with the workflow and sent
 through the API under the names below. A setting whose input is wired to another node shows as
@@ -75,7 +86,7 @@ read-only in the panel, since the wired value is the one used.
 
 | setting | meaning |
 |---|---|
-| `width`, `height` | output canvas in pixels; must match the latent being sampled (checked at run time). Rounded to whole 16 px latent cells. The token grid itself is read from the latent, so there is no VAE-downscale or patch-size setting |
+| `width`, `height` | output canvas in pixels; must match the latent being sampled (checked at run time). Rounded to whole 16 px latent cells. The token grid itself is read from the latent, so there is no VAE-downscale or patch-size setting. Replaced by the `width_input` / `height_input` sockets when they are connected |
 | `caption` | description of the whole image: the layout prompt's summary caption. With no captioned boxes, `prompt` is just this text |
 | `strict` | on: refuse to apply LoRAs while the layout is unverified and raise on any alignment problem. Off: pass the model through untouched (with a warning) instead. Prompt-only boxes work either way |
 | `regions` | the region list as JSON; drawn and edited by the editor, viewable and pasteable with **Edit JSON** (see *Region editor*) |
@@ -144,8 +155,14 @@ JSON, to fix it); it never overwrites the text.
 - **Properties** (right): for the selected box, its name, colour, box coordinates
   (editable), group, layout-prompt fields, and its **LoRA list**. With nothing selected it shows the
   **Canvas** panel: image size (with a swap button), caption, strict, a collapsed *Advanced* group,
-  **Edit JSON**, and drawing aids: grid, snap, and an optional reference image from ComfyUI's `input`
-  folder with an opacity slider (a drawing aid only).
+  **Edit JSON**, and drawing aids: grid, snap, and an optional **Background** image (a drawing aid only)
+  with an opacity slider. The background is a file from ComfyUI's `output` folder (newest first;
+  `sub/name.png` for a subfolder, ` [input]` after the name for the input folder), any image on your
+  computer through the folder button (copied to ComfyUI's `input` folder, like a *Load Image* upload), or
+  the image connected to the `background` input. **Use the last generated image** shows, after each run,
+  the last image saved after this node (by a *Save Image* it feeds, directly or through other nodes): the
+  way to draw over the previous generation, since linking a *Save Image* back into `background` would be a
+  loop. It needs no link and never re-runs anything; Preview Image results are not used.
 
 **Caching:** queueing sends the backend only what affects the image (box positions and order, labels,
 captions, text, palettes, LoRAs and curves; hidden boxes are left out). Names, colours, locks, groups
@@ -156,9 +173,10 @@ Boxes are stored as `[y_min, x_min, y_max, x_max]`, integer pixels, measured fro
 with y pointing down. This is the same convention as ComfyUI's *MOSS-Image Layout Prompt* node. The
 selected box's stored value is shown above the canvas.
 
-**Layer order:** the top row of the layer list is drawn first (underneath); the bottom row is drawn
-last (on top). LoRAs and layout-prompt items are emitted in exactly this order, minus hidden rows, so
-put the background first and the foreground last, as with *Create Bounding Boxes*. Groups only
+**Layer order:** like other layer panels, the top row of the layer list is in front (on top) and the
+bottom row is the background (the panel says so: "▲ front" by its title, "▼ back (background)" under the
+last row). The regions JSON keeps the order of *Create Bounding Boxes*, background
+first: LoRAs and layout-prompt items are emitted from the bottom row up, minus hidden rows. Groups only
 organise rows; they change nothing about the output.
 
 **What a box does** is decided by its fields. It is a layout-prompt item when it has a caption (or,
@@ -180,7 +198,7 @@ model alone.
 | undo / redo | **Ctrl/Cmd + Z** / **Ctrl/Cmd + Shift + Z** (or **Ctrl + Y**) |
 | multi-select | **Shift**- or **Ctrl/Cmd**-click boxes or rows |
 | deselect / cancel | **Esc** |
-| reorder | ▲ / ▼ buttons, or drag a row by its ⠿ grip |
+| reorder | ▲ (toward the front) / ▼ (toward the back), or drag a row (anywhere but its buttons; a group by its header) onto another row: it lands just above it |
 
 The keyboard shortcuts work while the canvas has focus (click it first). Locked boxes cannot be moved
 or resized on the canvas.

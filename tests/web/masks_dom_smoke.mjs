@@ -18,7 +18,8 @@ const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
 const require = createRequire(import.meta.url);
 let chromium;
 try {
-  ({ chromium } = require("playwright"));
+  // fork (ahx): playwright-core with an installed browser works too (PW_CHANNEL=chrome or msedge)
+  ({ chromium } = (() => { try { return require("playwright"); } catch { return require("playwright-core"); } })());
 } catch {
   console.log("SKIP: playwright not available");
   process.exit(0);
@@ -168,7 +169,7 @@ const server = createServer((req, res) => {
 });
 await new Promise((r) => server.listen(0, r));
 
-const browser = await chromium.launch();
+const browser = await chromium.launch(process.env.PW_CHANNEL ? { channel: process.env.PW_CHANNEL } : {});
 const page = await browser.newPage({ viewport: { width: 1100, height: 640 }, deviceScaleFactor: 2 });
 const errors = [];
 page.on("pageerror", (e) => errors.push(String(e)));
@@ -188,8 +189,8 @@ const row = (name) => page.locator(".mcm-row", { hasText: name });
 
 // 1. boxes from the linked node (hidden ones left out); characters ticked, the object not; widgets hidden
 await page.waitForFunction(() => document.querySelectorAll(".mcm-row").length === 3);
-assert.deepEqual(await page.locator(".mcm-row .mrl-name").allInnerTexts(), ["Alice", "Bob", "Lamp"]);
-assert.deepEqual(await page.locator(".mcm-row input[type=checkbox]").evaluateAll((xs) => xs.map((x) => x.checked)), [true, true, false]);
+assert.deepEqual(await page.locator(".mcm-row .mrl-name").allInnerTexts(), ["Lamp", "Bob", "Alice"]); // fork (ahx): front first
+assert.deepEqual(await page.locator(".mcm-row input[type=checkbox]").evaluateAll((xs) => xs.map((x) => x.checked)), [false, true, true]);
 assert.ok(await page.evaluate(() => window.node.widgets.every((w) => w.hidden === true)));
 console.log("box list ok");
 

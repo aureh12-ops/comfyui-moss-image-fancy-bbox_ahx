@@ -407,3 +407,55 @@ def test_regions_output_carries_the_boxes_and_canvas(fake_comfy, monkeypatch):
         out = json.loads(apply(node, patcher, text, width=toy.W, height=toy.H)["result"][4])
         assert out["canvas"] == {"width": toy.W, "height": toy.H}
         assert out["regions"] == json.loads(text)["regions"]
+
+
+# ------------------------------------------------------------------ fork (ahx): size sockets and background
+EMPTY = json.dumps({"version": 2, "regions": []})
+
+
+def test_size_sockets_are_sockets_after_the_widgets(fake_comfy):
+    """width_input / height_input / background are sockets (no widget), so saved widget values keep their places."""
+    _, node = fake_comfy
+    opt = node.MossRegionalLora.INPUT_TYPES()["optional"]
+    assert list(opt)[-3:] == ["width_input", "height_input", "background"]
+    for name in ("width_input", "height_input"):
+        assert opt[name][0] == "INT" and opt[name][1]["forceInput"] is True
+    assert opt["background"][0] == "IMAGE"
+
+
+def test_size_sockets_replace_the_editor_size(fake_comfy, monkeypatch):
+    """A connected size replaces the editor's, rounded down to whole 16 px cells (as the empty latent node
+    does), wherever the size is used: the outputs, the regions' canvas and the editor report."""
+    patcher, node = fake_comfy
+    set_layout(monkeypatch)
+    for regions in (regions_json((FULL, 1.0)), EMPTY):                       # active / prompt-only
+        out = apply(node, patcher, regions, width=999, height=999, width_input=toy.W + 15, height_input=toy.H)
+        assert out["result"][2:4] == (toy.W, toy.H)
+        assert json.loads(out["result"][4])["canvas"] == {"width": toy.W, "height": toy.H}
+        summary = out["ui"]["moss_regional_lora"][0]
+        assert (summary["width"], summary["height"]) == (toy.W, toy.H)
+    # one socket alone; the other side stays the editor's
+    assert apply(node, patcher, EMPTY, width=toy.W, height=toy.H, height_input=5)["result"][2:4] == (toy.W, 16)
+    # unconnected: the editor's size, reported as such
+    out = apply(node, patcher, EMPTY, width=toy.W, height=toy.H)
+    assert out["result"][2:4] == (toy.W, toy.H) and out["ui"]["moss_regional_lora"][0]["width"] == toy.W
+
+
+def test_background_socket_is_sent_to_the_editor(fake_comfy, monkeypatch, tmp_path):
+    """The first background image is saved to the temp folder and named in the editor report."""
+    patcher, node = fake_comfy
+    monkeypatch.setattr(sys.modules["folder_paths"], "get_temp_directory", lambda: str(tmp_path), raising=False)
+    out = apply(node, patcher, EMPTY, background=torch.rand(2, 24, 32, 3))
+    ref = out["ui"]["moss_regional_lora"][0]["background"]
+    assert ref["type"] == "temp" and ref["subfolder"] == ""
+    from PIL import Image
+    with Image.open(tmp_path / ref["filename"]) as im:
+        assert im.size == (32, 24)
+    assert "background" not in apply(node, patcher, EMPTY)["ui"]["moss_regional_lora"][0]
+
+
+def test_background_failure_never_stops_the_run(fake_comfy):
+    """A drawing aid only: if it can't be saved (here: no temp folder), the node still runs."""
+    patcher, node = fake_comfy
+    out = apply(node, patcher, EMPTY, caption="a cat", background=torch.rand(1, 8, 8, 3))
+    assert "background" not in out["ui"]["moss_regional_lora"][0] and out["result"][1] == "a cat"

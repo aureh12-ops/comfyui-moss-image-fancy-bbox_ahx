@@ -20,6 +20,7 @@ import { CurvePanel, drawSparkline } from "./curve_panel.js";
 import { icon } from "./icons.js";
 import { dropRemovedGridValues } from "./migrate.js";
 import { Viewport, frameRect, installKeySink, installPanZoom, isKeySink, trackSize, zoomInFactor, zoomOutFactor } from "./viewport.js";
+import { canvasSide, downstreamIds, imageRefValue, imageWidgetRef, liveNumber, parseImageRef, savedImageRef, stripAnnotations, uploadedRefName, viewPath } from "./sources.js";
 
 const NODE_NAME = "MossRegionalLora_ahx"; // fork (ahx): own node ID, see FORK_SUFFIX in node.py
 const EDITOR_WIDGET = "region_editor";
@@ -76,6 +77,7 @@ const CSS = `
 .mrl-panel{display:flex;flex-direction:column;min-height:0;border:1px solid var(--border-color,#444);border-radius:3px;background:rgba(0,0,0,.15)}
 .mrl-panel-head{display:flex;align-items:center;gap:4px;padding:3px 5px;font-weight:bold;border-bottom:1px solid rgba(128,128,128,.3)}
 .mrl-panel-head .grow{flex:1}
+.mrl-panel-head .mrl-hint{font-weight:normal}
 .mrl-panel-body{overflow:auto;flex:1 1 auto;min-height:0}
 .mrl-layers{flex:0 0 260px;width:260px;min-width:0}
 .mrl-props{flex:0 0 300px;width:300px;min-width:0}
@@ -96,6 +98,8 @@ const CSS = `
 .mrl-badge{font-size:10px;padding:1px 3px;border-radius:3px;background:rgba(128,128,128,.3);display:inline-flex;align-items:center;gap:2px}
 .mrl-oob{color:#fb4;display:inline-flex;align-items:center;gap:3px}
 .mrl-grip{cursor:grab;opacity:.6;display:inline-flex}
+.mrl-row.mrl-drag-src,.mrl-group.mrl-drag-src{opacity:.45}
+.mrl-root.mrl-row-dragging,.mrl-root.mrl-row-dragging *{cursor:grabbing!important}
 .mrl-mini{padding:0 3px!important;line-height:16px!important;font-size:10px}
 .mrl-sec{padding:5px 6px;border-bottom:1px solid rgba(128,128,128,.25);display:flex;flex-direction:column;gap:4px}
 .mrl-sec-title{font-weight:bold;opacity:.85;display:flex;align-items:center;gap:6px}
@@ -223,12 +227,36 @@ export function loraList() {
   return loraListPromise.p;
 }
 
-function inputFileList() {
+// Fork (ahx): the Background file list is ComfyUI's output folder (newest first), not input.
+function outputFileList() {
   return api
-    .fetchApi("/internal/files/input")
+    .fetchApi("/internal/files/output")
     .then((r) => (r.ok ? r.json() : []))
-    .then((list) => list.map((s) => String(s).replace(/ \[input\]$/, "")))
+    .then((list) => stripAnnotations(list, "output"))
     .catch(() => []);
+}
+
+/** Fork (ahx): a link by id (graph.links is a Map in newer frontends, an object in older ones). */
+function graphLink(graph, id) {
+  return graph?.getLink?.(id) ?? graph?.links?.get?.(id) ?? graph?.links?.[id];
+}
+
+/** Fork (ahx): {node, slot} feeding input `name` (through legacy Reroute nodes), or null. */
+function inputSource(node, name) {
+  const graph = node.graph || app.graph;
+  let cur = node;
+  let slot = (node.inputs || []).findIndex((i) => i.name === name);
+  for (let hops = 0; hops < 16 && slot >= 0; hops++) {
+    const id = cur.inputs?.[slot]?.link;
+    if (id == null) return null;
+    const link = graphLink(graph, id);
+    const src = link ? graph.getNodeById(link.origin_id) : cur.getInputNode?.(slot);
+    if (!src) return null;
+    if (src.type !== "Reroute") return { node: src, slot: link?.origin_slot ?? 0 };
+    cur = src;
+    slot = 0;
+  }
+  return null;
 }
 
 class RegionEditor {
@@ -256,7 +284,12 @@ class RegionEditor {
     this.expanded = null; // {id, index}: LoRA entry whose curve is open in the properties panel
     this.refImg = null;
     this.refName = null;
-    this.refState = "none"; // none | loading | ok | missing
+    this.refKey = null;
+    this.refState = "none"; // none | loading | ok | missing | pending (background wired, not run yet)
+    this.lastBackground = null; // the background socket's image from the last run ({filename, subfolder, type})
+    this.lastSaved = null; // fork (ahx): the last image saved downstream this session (noteSavedImage)
+    this.onAnyExecuted = (e) => this.noteSavedImage(e?.detail);
+    api.addEventListener?.("executed", this.onAnyExecuted);
     this.loras = [];
     this.status = "";
     this.buildDom();
@@ -272,6 +305,7 @@ class RegionEditor {
 
   destroy() {
     clearInterval(this.timer);
+    api.removeEventListener?.("executed", this.onAnyExecuted);
     this.ro?.disconnect();
     this.panZoom?.dispose();
     this.curvePanel?.destroy();
@@ -304,7 +338,7 @@ class RegionEditor {
     this.list = el("div", { class: "mrl-panel-body" });
     const layers = el("div", { class: "mrl-panel mrl-layers" }, [
       el("div", { class: "mrl-panel-head" }, [
-        el("span", { class: "grow", text: "Layers" }),
+        el("span", { class: "grow", text: "Layers ", title: "Top row is in front; the bottom row is the background." }, [el("span", { class: "mrl-hint", text: "▲ front" })]),
         el("button", { icon: "folder-plus", text: "Group", class: "mrl-mini", title: "New group (puts the selected boxes in it)", onclick: () => this.addGroup() }),
       ]),
       this.list,
@@ -462,9 +496,25 @@ class RegionEditor {
   }
 
   canvasSize() {
-    const w = Math.max(1, Math.round(Number(this.wWidth?.value) || 1024));
-    const h = Math.max(1, Math.round(Number(this.wHeight?.value) || 1024));
-    return { W: w, H: h };
+    return { W: this.canvasSideValue("width", this.wWidth), H: this.canvasSideValue("height", this.wHeight) };
+  }
+
+  /** Fork (ahx): a canvas side; from width_input / height_input when wired: live from a primitive or a
+   * Resolution Selector, else the size the last run wrote into the hidden widget (setStatus). */
+  canvasSideValue(name, w) {
+    const own = Math.max(1, Math.round(Number(w?.value) || 1024));
+    const src = inputSource(this.node, `${name}_input`);
+    const live = src ? liveNumber(src.node, src.slot) : null;
+    return live != null ? canvasSide(live) : own;
+  }
+
+  /** Fork (ahx): whether a size comes from another node (its socket or its hidden widget's input). */
+  sizeWired(name) {
+    return this.socketLinked(`${name}_input`) || this.linkedNames().includes(name);
+  }
+
+  socketLinked(name) {
+    return (this.node.inputs || []).some((i) => i.name === name && i.link != null);
   }
 
   poll() {
@@ -480,10 +530,13 @@ class RegionEditor {
     // only while it is not being typed in, so typing keeps its focus
     if (document.activeElement !== this.captionInput) this.captionSeen = this.wCaption?.value;
     const settings = [...SETTINGS, ...ADVANCED].map(([n]) => this.widget(n)?.value).join(":");
-    const d = `${W}x${H}:${settings}:${this.captionSeen}:${this.linkedNames().join(",")}`;
+    const sockets = ["width_input", "height_input", "background"].map((n) => +this.socketLinked(n)).join("");
+    const d = `${W}x${H}:${settings}:${this.captionSeen}:${this.linkedNames().join(",")}:${sockets}`;
     if (d !== this.lastDims) {
       this.lastDims = d;
       this.renderAll();
+    } else if (this.loadReference()) {
+      this.draw(); // the background's source changed (another file picked on the connected Load Image node)
     }
   }
 
@@ -505,13 +558,13 @@ class RegionEditor {
   }
 
   /** Apply a new state: record undo, serialise, write the widget. Refused while the JSON is invalid. */
-  commit(newState) {
+  commit(newState, undoable = true) {
     if (this.parseError) return false;
     const before = this.text;
     newState.version = Math.max(Number.isInteger(newState.version) ? newState.version : 0, S.SCHEMA_VERSION);
     const text = S.serializeState(newState);
     if (text === before) return false;
-    this.history.record(before);
+    if (undoable) this.history.record(before);
     this.writeText(text);
     this.state = newState;
     this.renderAll();
@@ -541,10 +594,24 @@ class RegionEditor {
     this.syncFromWidget();
   }
 
-  setEditor(patch) {
+  setEditor(patch, undoable = true) {
     const s = S.cloneState(this.state);
     s.editor = { ...s.editor, ...patch };
-    this.commit(s);
+    this.commit(s, undoable);
+  }
+
+  /** Fork (ahx): keep the first image saved by a node downstream of this one ("executed" event); with "Use the
+   * last generated image" on, show it (no undo step, so Ctrl+Z keeps undoing the user's own edits). */
+  noteSavedImage(detail) {
+    const ref = savedImageRef(detail?.output);
+    if (!ref) return;
+    const graph = this.node.graph || app.graph;
+    const getNode = (id) => graph?.getNodeById?.(id);
+    const id = String(detail.display_node ?? detail.node ?? "");
+    const target = getNode(id) ?? getNode(id.split(":")[0]); // inside a subgraph: its node in this graph
+    if (!target || !downstreamIds(this.node, getNode, (l) => graphLink(graph, l)).has(target.id)) return;
+    this.lastSaved = ref;
+    if (this.state.editor?.reference_follow) this.setEditor({ reference_image: ref }, false);
   }
 
   // ------------------------------------------------------------------ helpers
@@ -825,8 +892,8 @@ class RegionEditor {
     this.renderTools();
     this.renderReadout();
     this.renderList();
+    this.loadReference(); // before the panels: the Drawing aids section names the background's source
     this.renderProps();
-    this.loadReference();
     this.draw();
   }
 
@@ -865,31 +932,72 @@ class RegionEditor {
     this.readout.textContent = `${r.name || r.id}: bbox [y_min, x_min, y_max, x_max] = [${bbox.join(", ")}]`;
   }
 
-  loadReference() {
+  /** Fork (ahx): the background image: {key, path (null while pending), label} or null. The background socket
+   * wins over the Background file: live from a Load Image node, else the last run's image. */
+  referenceSource() {
+    if (this.socketLinked("background")) {
+      const live = imageWidgetRef(inputSource(this.node, "background")?.node);
+      if (live) return { key: `live:${viewPath(live)}`, path: viewPath(live), label: imageRefValue(live) };
+      if (this.lastBackground) return { key: `run:${viewPath(this.lastBackground)}`, path: viewPath(this.lastBackground), label: "the last run's image" };
+      return { key: "pending", path: null, label: "queue once to show its image" };
+    }
     const name = this.state.editor?.reference_image || "";
-    if (name === this.refName) return;
-    this.refName = name;
+    const ref = parseImageRef(name, "output");
+    return ref ? { key: `ref:${viewPath(ref)}`, path: viewPath(ref), label: name } : null;
+  }
+
+  /** Fork (ahx): upload the picked file to ComfyUI's input folder and make it the background. */
+  async uploadReference(filePick) {
+    const file = filePick.files?.[0];
+    filePick.value = ""; // so picking the same file again still fires "change"
+    if (!file) return;
+    const body = new FormData();
+    body.append("image", file);
+    body.append("type", "input");
+    this.statusLine.textContent = `Uploading ${file.name}…`;
+    try {
+      const r = await api.fetchApi("/upload/image", { method: "POST", body });
+      if (!r.ok) throw new Error(`${r.status} ${r.statusText}`);
+      const name = uploadedRefName(await r.json());
+      if (!name) throw new Error("unexpected reply from ComfyUI");
+      this.statusLine.textContent = this.status;
+      this.setEditor({ reference_image: name });
+    } catch (e) {
+      this.statusLine.textContent = `Background upload failed (${file.name}): ${e.message}`;
+    }
+  }
+
+  /** Load the reference image if its source changed; true if it did. */
+  loadReference() {
+    const src = this.referenceSource();
+    const key = src?.key ?? "";
+    if (key === this.refKey) return false;
+    this.refKey = key;
+    this.refName = src?.label ?? "";
     this.refImg = null;
-    if (!name) {
+    if (!src) {
       this.refState = "none";
-      return;
+      return true;
+    }
+    if (!src.path) {
+      this.refState = "pending";
+      return true;
     }
     this.refState = "loading";
     const img = new Image();
     img.onload = () => {
-      if (this.refName !== name) return;
+      if (this.refKey !== key) return;
       this.refImg = img;
       this.refState = "ok";
       this.draw();
     };
     img.onerror = () => {
-      if (this.refName !== name) return;
+      if (this.refKey !== key) return;
       this.refState = "missing";
       this.draw();
     };
-    const sub = name.includes("/") ? name.slice(0, name.lastIndexOf("/")) : "";
-    const file = name.includes("/") ? name.slice(name.lastIndexOf("/") + 1) : name;
-    img.src = api.apiURL(`/view?filename=${encodeURIComponent(file)}&type=input&subfolder=${encodeURIComponent(sub)}`);
+    img.src = api.apiURL(src.path);
+    return true;
   }
 
   draw() {
@@ -917,10 +1025,11 @@ class RegionEditor {
       ctx.globalAlpha = this.opacityPreview ?? ed.reference_opacity ?? 0.5;
       ctx.drawImage(this.refImg, 0, 0, v.W, v.H);
       ctx.globalAlpha = 1;
-    } else if (this.refState === "missing" || this.refState === "loading") {
+    } else if (this.refState === "missing" || this.refState === "loading" || this.refState === "pending") {
       ctx.fillStyle = "rgba(255,255,255,0.35)";
       ctx.font = `${12 * px}px sans-serif`;
-      ctx.fillText(this.refState === "missing" ? `reference image unavailable: ${this.refName}` : "loading reference…", 8 * px, v.H - 8 * px);
+      const msg = { missing: `background image unavailable: ${this.refName}`, loading: "loading background…", pending: `background input: ${this.refName}` }[this.refState];
+      ctx.fillText(msg, 8 * px, v.H - 8 * px);
     }
 
     // grid (8.3c)
@@ -1012,52 +1121,111 @@ class RegionEditor {
   }
 
   // ------------------------------------------------------------------ layer list (8.6, 8.7)
+  // Fork (ahx): shown front first (top row = on top), like other layer panels; the stored order stays
+  // background first, so a drop "above" a row lands just after it in the regions list.
   renderList() {
     const s = this.state;
     const { W, H } = this.canvasSize();
     const ro = !!this.parseError;
     const rows = [];
-    for (const u of S.listUnits(s)) {
+    for (const u of S.listUnits(s).reverse()) {
       if (u.type === "group") {
         rows.push(this.groupHeader(u, ro));
-        if (!u.group.collapsed) for (const i of u.indices) rows.push(this.layerRow(i, true, W, H, ro));
+        if (!u.group.collapsed) for (const i of [...u.indices].reverse()) rows.push(this.layerRow(i, true, W, H, ro));
       } else rows.push(this.layerRow(u.index, false, W, H, ro));
     }
-    if (!rows.length) rows.push(el("div", { class: "mrl-row mrl-hint", text: "No boxes yet. Pick the Box tool (B) and drag on the canvas." }));
-    const tail = el("div", { class: "mrl-row", style: "min-height:16px;border:none" });
+    const empty = !rows.length;
+    if (empty) rows.push(el("div", { class: "mrl-row mrl-hint", text: "No boxes yet. Pick the Box tool (B) and drag on the canvas." }));
+    const tail = el("div", { class: "mrl-row mrl-hint", style: "min-height:16px;border:none", text: empty ? "" : "▼ back (background)" });
     tail.addEventListener("click", () => this.select(null, false));
-    this.dropTarget(tail, null, undefined);
+    this.dropTarget(tail, s.regions[0]?.id ?? null, undefined); // below every row: the very back
+    this.listTail = tail;
     rows.push(tail);
     this.list.replaceChildren(...rows);
   }
 
+  /** Where a row dropped onto `row` lands: just before region `beforeId` (the end when null), adopting
+   * `group`. Read by rowDrag. */
   dropTarget(row, beforeId, group) {
-    row.addEventListener("dragover", (e) => {
-      if (!this.dragItem || this.parseError) return;
-      e.preventDefault();
-      row.classList.add("drop-before");
+    row.mrlDrop = { beforeId, group };
+  }
+
+  /** Fork (ahx): drag a row (not its buttons or fields) to reorder, with pointer events: native drag-and-drop
+   * doesn't start inside ComfyUI's node container. A press that barely moves stays a click (select). */
+  rowDrag(row, item) {
+    row.addEventListener("pointerdown", (e) => {
+      if (e.button !== 0 || this.parseError || e.target.closest?.("button,input,select,textarea")) return;
+      const x0 = e.clientX;
+      const y0 = e.clientY;
+      let dragging = false;
+      let target = null;
+      const mark = (t) => {
+        if (t === target) return;
+        target?.classList.remove("drop-before");
+        target = t;
+        target?.classList.add("drop-before");
+      };
+      const move = (ev) => {
+        if (!dragging) {
+          if (Math.hypot(ev.clientX - x0, ev.clientY - y0) < 4) return;
+          dragging = true;
+          row.classList.add("mrl-drag-src");
+          this.root.classList.add("mrl-row-dragging");
+        }
+        ev.preventDefault();
+        mark(this.dropRowAt(ev.clientX, ev.clientY));
+      };
+      const end = (ev) => {
+        row.removeEventListener("pointermove", move);
+        row.removeEventListener("pointerup", end);
+        row.removeEventListener("pointercancel", end);
+        try {
+          row.releasePointerCapture?.(e.pointerId);
+        } catch {}
+        const drop = target?.mrlDrop;
+        mark(null);
+        row.classList.remove("mrl-drag-src");
+        this.root.classList.remove("mrl-row-dragging");
+        if (!dragging) return;
+        // the click ending a drag targets the row itself, so stop its own select listener too
+        const swallow = (c) => c.stopImmediatePropagation();
+        row.addEventListener("click", swallow, { capture: true, once: true });
+        setTimeout(() => row.removeEventListener("click", swallow, { capture: true }), 0);
+        if (ev.type === "pointerup" && drop) this.dropItem(item, drop);
+      };
+      try {
+        row.setPointerCapture?.(e.pointerId);
+      } catch {}
+      row.addEventListener("pointermove", move);
+      row.addEventListener("pointerup", end);
+      row.addEventListener("pointercancel", end);
     });
-    row.addEventListener("dragleave", () => row.classList.remove("drop-before"));
-    row.addEventListener("drop", (e) => {
-      row.classList.remove("drop-before");
-      const item = this.dragItem;
-      this.dragItem = null;
-      if (!item) return;
-      e.preventDefault();
-      if (item.type === "region") this.commit(S.dropRegion(this.state, item.id, beforeId, group));
-      else this.commit(S.dropGroup(this.state, item.id, beforeId));
-    });
+  }
+
+  /** The row a drag at (x, y) would drop before: the row under the pointer, or the end of the list when the
+   * pointer is below the last row. null outside the list. */
+  dropRowAt(x, y) {
+    const hit = document.elementFromPoint?.(x, y)?.closest?.(".mrl-row, .mrl-group");
+    if (hit && this.list.contains(hit) && hit.mrlDrop) return hit;
+    const r = this.list.getBoundingClientRect();
+    return x >= r.left && x <= r.right && y >= r.top && y <= r.bottom ? this.listTail : null;
+  }
+
+  dropItem(item, { beforeId, group }) {
+    if (item.type === "group") return this.commit(S.dropGroup(this.state, item.id, beforeId));
+    if (beforeId === item.id) {
+      // "just after the row" is the dragged box itself: it keeps its place but may still change group
+      const k = this.state.regions.findIndex((r) => r.id === item.id);
+      beforeId = this.state.regions[k + 1]?.id ?? null;
+    }
+    this.commit(S.dropRegion(this.state, item.id, beforeId, group));
   }
 
   groupHeader(u, ro) {
     const g = u.group;
     const name = el("input", { type: "text", value: g.name, title: "Rename group" });
     name.addEventListener("change", () => this.commit(S.renameGroup(this.state, g.id, name.value)));
-    const grip = el("span", { class: "mrl-grip", icon: "grip-vertical", draggable: ro ? "false" : "true", title: "Drag to reorder the group" });
-    grip.addEventListener("dragstart", (e) => {
-      this.dragItem = { type: "group", id: g.id };
-      e.dataTransfer?.setData("text/plain", g.id);
-    });
+    const grip = el("span", { class: "mrl-grip", icon: "grip-vertical", title: "Drag to reorder the group" });
     const row = el("div", { class: "mrl-group" }, [
       grip,
       el("button", { icon: g.collapsed ? "chevron-right" : "chevron-down", class: "mrl-mini", title: "Collapse / expand", onclick: () => this.commit(S.setGroupCollapsed(this.state, g.id, !g.collapsed)) }),
@@ -1065,8 +1233,8 @@ class RegionEditor {
       el("span", { class: "mrl-badge", text: String(u.indices.length) }),
       el("button", { icon: "eye", class: "mrl-mini", title: "Show all: make every box in the group visible", onclick: () => this.commit(S.setGroupVisible(this.state, g.id, true)) }),
       el("button", { icon: "eye-off", class: "mrl-mini", title: "Hide all: hide every box in the group", onclick: () => this.commit(S.setGroupVisible(this.state, g.id, false)) }),
-      el("button", { icon: "chevron-up", class: "mrl-mini", title: "Move group up", onclick: () => this.commit(S.moveGroup(this.state, g.id, -1)) }),
-      el("button", { icon: "chevron-down", class: "mrl-mini", title: "Move group down", onclick: () => this.commit(S.moveGroup(this.state, g.id, +1)) }),
+      el("button", { icon: "chevron-up", class: "mrl-mini", title: "Move group up (toward the front)", onclick: () => this.commit(S.moveGroup(this.state, g.id, +1)) }),
+      el("button", { icon: "chevron-down", class: "mrl-mini", title: "Move group down (toward the back)", onclick: () => this.commit(S.moveGroup(this.state, g.id, -1)) }),
       el("button", {
         icon: "trash-2",
         class: "mrl-mini",
@@ -1076,8 +1244,10 @@ class RegionEditor {
         },
       }),
     ]);
-    const first = u.indices.length ? this.state.regions[u.indices[0]].id : null;
-    this.dropTarget(row, first, g.id);
+    // dropped on the header: the group's front-most box (just after its last one)
+    const after = u.indices.length ? this.state.regions[u.indices[u.indices.length - 1] + 1]?.id ?? null : null;
+    this.dropTarget(row, after, g.id);
+    this.rowDrag(row, { type: "group", id: g.id });
     if (ro) for (const x of row.querySelectorAll("input,button")) x.disabled = true;
     return row;
   }
@@ -1097,11 +1267,7 @@ class RegionEditor {
       e.stopPropagation();
       this.commit(S.updateRegion(this.state, id, { visible: !shown }));
     });
-    const grip = el("span", { class: "mrl-grip", icon: "grip-vertical", draggable: ro ? "false" : "true", title: "Drag to reorder" });
-    grip.addEventListener("dragstart", (e) => {
-      this.dragItem = { type: "region", id };
-      e.dataTransfer?.setData("text/plain", id);
-    });
+    const grip = el("span", { class: "mrl-grip", icon: "grip-vertical", title: "Drag the row to reorder" });
     const nLoras = S.lorasOf(r).filter((e) => e.lora).length;
     const stop = (fn) => (e) => {
       e.stopPropagation();
@@ -1116,11 +1282,12 @@ class RegionEditor {
       S.hasPrompt(r) ? el("span", { class: "mrl-badge", icon: "type", iconSize: 11, title: "In the layout prompt" }) : null,
       vis,
       el("button", { icon: r.locked ? "lock" : "lock-open", class: `mrl-mini${r.locked ? "" : " mrl-toggle-off"}`, title: r.locked ? "Locked: click to unlock" : "Lock (no moving or resizing on the canvas)", onclick: stop(() => this.commit(S.updateRegion(this.state, id, { locked: !r.locked }))) }),
-      el("button", { icon: "chevron-up", class: "mrl-mini", title: "Move up (drawn earlier)", onclick: stop(() => this.commit(S.moveRegion(this.state, id, -1))) }),
-      el("button", { icon: "chevron-down", class: "mrl-mini", title: "Move down (drawn later)", onclick: stop(() => this.commit(S.moveRegion(this.state, id, +1))) }),
+      el("button", { icon: "chevron-up", class: "mrl-mini", title: "Move up (toward the front)", onclick: stop(() => this.commit(S.moveRegion(this.state, id, +1))) }),
+      el("button", { icon: "chevron-down", class: "mrl-mini", title: "Move down (toward the back)", onclick: stop(() => this.commit(S.moveRegion(this.state, id, -1))) }),
     ]);
     row.addEventListener("click", (e) => this.select(id, e.shiftKey || e.ctrlKey || e.metaKey));
-    this.dropTarget(row, id, inGroup ? r.group : null);
+    this.dropTarget(row, s.regions[i + 1]?.id ?? null, inGroup ? r.group : null);
+    this.rowDrag(row, { type: "region", id });
     if (ro) for (const x of row.querySelectorAll("input,button")) x.disabled = true;
     return row;
   }
@@ -1173,9 +1340,17 @@ class RegionEditor {
   }
 
   imageSection() {
-    const linked = this.linkedNames();
+    const { W, H } = this.canvasSize();
     const wIn = this.settingControl("width", "size", "Width in pixels of the image being generated");
     const hIn = this.settingControl("height", "size", "Height in pixels of the image being generated");
+    // Fork (ahx): a size from the width_input / height_input socket shows the value used, read-only
+    for (const [name, c, v] of [["width", wIn, W], ["height", hIn, H]]) {
+      if (c && this.socketLinked(`${name}_input`)) {
+        c.value = String(v);
+        c.disabled = true;
+        c.title = `From the node connected to ${name}_input (rounded down to whole 16 px cells). Read live from a primitive or a Resolution Selector; otherwise updated after each run.`;
+      }
+    }
     const swap = el("button", {
       icon: "arrow-left-right",
       class: "mrl-mini",
@@ -1187,10 +1362,12 @@ class RegionEditor {
         this.poll();
       },
     });
-    if (linked.includes("width") || linked.includes("height")) swap.disabled = true;
+    const wired = this.sizeWired("width") || this.sizeWired("height");
+    if (wired) swap.disabled = true;
     return el("div", { class: "mrl-sec mrl-keep" }, [
       el("div", { class: "mrl-sec-title", text: "Image" }),
       el("div", { class: "mrl-size" }, [el("span", { text: "W", style: "opacity:.75" }), wIn, el("span", { text: "H", style: "opacity:.75" }), hIn, swap]),
+      wired ? el("div", { class: "mrl-hint", text: "Size from the connected node; boxes keep their pixel positions from the centre." }) : null,
       el("div", { class: "mrl-hint", text: "Connect the width/height outputs to the empty latent node so the image always matches these boxes." }),
     ]);
   }
@@ -1250,9 +1427,50 @@ class RegionEditor {
     snap.checked = !!ed.snap;
     snap.addEventListener("change", () => this.setEditor({ snap: snap.checked }));
     const refList = el("datalist", { id: `mrl-ref-${Math.random().toString(36).slice(2)}` });
-    const ref = el("input", { type: "text", list: refList.id, value: ed.reference_image || "", placeholder: "file in ComfyUI/input" });
-    ref.addEventListener("focus", () => inputFileList().then((files) => refList.replaceChildren(...files.map((f) => el("option", { value: f })))));
+    const ref = el("input", {
+      type: "text",
+      list: refList.id,
+      value: ed.reference_image || "",
+      placeholder: "file in ComfyUI/output",
+      title: "Background image: a file in ComfyUI's output folder (newest first; sub/name.png for a subfolder). Add [input] after the name for the input folder.",
+    });
+    ref.addEventListener("focus", () => outputFileList().then((files) => refList.replaceChildren(...files.map((f) => el("option", { value: f })))));
     ref.addEventListener("change", () => this.setEditor({ reference_image: ref.value.trim() }));
+    // Fork (ahx): pick a file on this computer (kept outside the <label>, which would otherwise activate it)
+    const filePick = el("input", { type: "file", accept: "image/*", style: "display:none" });
+    filePick.addEventListener("change", () => this.uploadReference(filePick));
+    const browse = el("button", {
+      icon: "folder-open",
+      class: "mrl-mini",
+      title: "Pick an image on this computer. It is copied to ComfyUI's input folder and used as the background.",
+      onclick: () => filePick.click(),
+    });
+    // Fork (ahx): "Use the last generated image" (noteSavedImage). The panel's "Background" is stored as
+    // editor.reference_*, so saved workflows keep working.
+    const followTitle = "After each run, show the last image this workflow saved after this node (by a Save Image it feeds, directly or through other nodes). Saved images only: Preview Image results are not used.";
+    const follow = el("input", { type: "checkbox", title: followTitle });
+    follow.checked = !!ed.reference_follow;
+    follow.addEventListener("change", () => {
+      const patch = { reference_follow: follow.checked };
+      if (follow.checked && this.lastSaved) patch.reference_image = this.lastSaved; // one saved earlier this session
+      this.setEditor(patch);
+    });
+    // Fork (ahx): an image wired into the background socket replaces the Background file
+    const fromSocket = this.socketLinked("background");
+    if (fromSocket) {
+      ref.disabled = true;
+      browse.disabled = true;
+      follow.disabled = true;
+      ref.title = "Replaced by the image connected to the background input.";
+    } else if (ed.reference_follow) {
+      ref.disabled = true;
+      browse.disabled = true;
+      ref.title = "Using the last generated image; untick it to choose one yourself.";
+    }
+    const followHint = ed.reference_follow && !fromSocket
+      ? el("div", { class: "mrl-hint", text: ed.reference_image ? "Shows the last image saved by a Save Image after this node; updated after each run." : "Waiting: the next image saved by a Save Image after this node will show here." })
+      : null;
+    const followRow = el("span", { style: "display:inline-flex;align-items:center;gap:4px;min-width:0", title: followTitle }, [follow, el("span", { text: "Use the last generated image" })]);
     const op = el("input", { type: "range", min: "0", max: "1", step: "0.05", value: String(ed.reference_opacity ?? 0.5), style: "flex:1" });
     op.addEventListener("input", () => {
       this.opacityPreview = parseFloat(op.value);
@@ -1266,10 +1484,14 @@ class RegionEditor {
       el("div", { class: "mrl-sec-title", text: "Drawing aids" }),
       this.field("Grid ÷", grid),
       this.field("Snap", snap),
-      this.field("Reference", ref),
+      this.field("Background", el("div", { style: "display:flex;align-items:center;gap:4px;flex:1;min-width:0" }, [ref, browse])),
       refList,
+      filePick,
+      this.field("", followRow),
+      followHint,
+      fromSocket ? el("div", { class: "mrl-hint", text: `Background input: ${this.refName || "connected"}` }) : null,
       this.field("Opacity", op),
-      el("div", { class: "mrl-hint", text: "The reference image is a drawing aid only; it never affects the output. Select a box to edit it." }),
+      el("div", { class: "mrl-hint", text: "The background image (a file in ComfyUI/output or on your computer, the last generated image, or the image connected to the background input) is a drawing aid only; it never affects the output. Select a box to edit it." }),
     ]);
   }
 
@@ -1517,6 +1739,12 @@ class RegionEditor {
 
   setStatus(summary) {
     if (!summary) return;
+    // Fork (ahx): keep a socket-fed size in the hidden widget, so the canvas and saved workflow match the run
+    for (const name of ["width", "height"]) {
+      if (this.socketLinked(`${name}_input`) && Number.isFinite(summary[name])) this.setWidget(name, summary[name]);
+    }
+    this.lastBackground = summary.background || null;
+    if (this.loadReference()) this.draw();
     const items = summary.prompt_items != null ? ` · ${summary.prompt_items} layout prompt item(s)` : "";
     if (summary.status === "active") {
       this.status = `Last run: ${summary.regions} LoRA(s) on boxes, ${summary.applied} LoRA layer(s) on ${summary.modules} module(s), ${summary.skipped} key(s) skipped${items}`;

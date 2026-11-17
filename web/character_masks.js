@@ -193,7 +193,7 @@ class MasksEditor {
   // ------------------------------------------------------------------ DOM
   build() {
     this.list = el("div", { class: "mrl-panel-body" });
-    const boxes = el("div", { class: "mrl-panel mcm-boxes" }, [el("div", { class: "mrl-panel-head", text: "Boxes" }), this.list]);
+    const boxes = el("div", { class: "mrl-panel mcm-boxes" }, [el("div", { class: "mrl-panel-head", text: "Boxes ", title: "Top row is in front." }, [el("span", { class: "mrl-hint", text: "▲ front" })]), this.list]);
     this.canvas = el("canvas");
     this.toolButtons = {};
     const tools = el("div", { class: "mrl-tools" }, [
@@ -588,7 +588,7 @@ class MasksEditor {
       this.errorBox.style.display = "block";
       this.errorBox.textContent = d.error;
     }
-    for (const { region, color } of this.boxes()) {
+    for (const { region, color } of this.boxes().reverse()) { // fork (ahx): front first, like the main editor's layers
       const det = this.detailOf(region);
       const rb = this.resultBox(region.id);
       const tick = el("input", { type: "checkbox", title: "Detail this box" });

@@ -106,6 +106,25 @@ def regions_with_canvas(regions: str, width: int, height: int) -> str:
     return json.dumps(data, ensure_ascii=False)
 
 
+def _canvas_side(linked, own):
+    """width_input / height_input rounded down to whole 16 px cells like the empty latent node, else `own`."""
+    if linked is None:
+        return own
+    return max(16, int(linked) // 16 * 16)
+
+
+def _save_background(image):
+    """The background socket's first image saved to temp/ for the editor, or None (a failure only logs)."""
+    if image is None:
+        return None
+    try:
+        from .character_masks_node import _save_temp_png
+        return _save_temp_png(image[0, ..., :3].detach().cpu().float(), "moss_regional_background")
+    except Exception as e:
+        log.warning("[MOSS Regional LoRA] could not save the background image for the editor: %s", e)
+        return None
+
+
 def _strip_previous(m):
     """Remove an earlier execution's injection and wrapper so re-execution replaces, not stacks (FR-10)."""
     from comfy.patcher_extension import WrappersMP
@@ -162,6 +181,17 @@ class MossRegionalLora:
                     "tooltip": "Where an edit pipeline's source-image tokens sit in the sequence. "
                                "Default measured by the MOSS-Image Layout Discovery node; re-run it after a "
                                "ComfyUI update."}),
+                # Fork (ahx): sockets, not widgets (forceInput), so saved widget values keep their positions.
+                "width_input": ("INT", {"forceInput": True,
+                                        "tooltip": "Optional: the canvas width from another node (an image-size or "
+                                                   "resolution node). Replaces the width set in the editor; rounded "
+                                                   "down to whole 16 px cells, like the empty latent node."}),
+                "height_input": ("INT", {"forceInput": True,
+                                         "tooltip": "Optional: the canvas height from another node. Replaces the "
+                                                    "height set in the editor; rounded down to whole 16 px cells."}),
+                "background": ("IMAGE", {"tooltip": "Optional drawing aid: an image shown behind the boxes in the "
+                                                    "editor, in place of its Background file. Never affects the "
+                                                    "output (but changing it re-runs this node and what follows)."}),
             },
         }
 
@@ -188,21 +218,28 @@ class MossRegionalLora:
         return _lora_fingerprint(regions)
 
     def apply(self, model, width, height, regions, ramp_start, ramp_end, steps,
-              strict, caption="", text_position=None, image_order=None, source_tokens=None):
+              strict, caption="", text_position=None, image_order=None, source_tokens=None,
+              width_input=None, height_input=None, background=None):
         # an API prompt without these options gets the same defaults as the UI
         text_position = MEASURED_TEXT_POSITION if text_position is None else text_position
         image_order = MEASURED_IMAGE_ORDER if image_order is None else image_order
         source_tokens = MEASURED_SOURCE_TOKENS if source_tokens is None else source_tokens
+        width, height = _canvas_side(width_input, width), _canvas_side(height_input, height)
         doc = parse_document(regions)
         for n in doc.notes:
             log.info("[MOSS Regional LoRA] %s", n)
         prompt = build_layout_prompt(caption or "", doc.prompt_items)
         m = model.clone()
         _strip_previous(m)
+        background_ref = _save_background(background)
 
         def out(summary):
             summary.setdefault("prompt_items", len(doc.prompt_items))
             summary.setdefault("notes", doc.notes)
+            # for the editor: the canvas actually used, and the background to draw behind the boxes
+            summary["width"], summary["height"] = width, height
+            if background_ref:
+                summary["background"] = background_ref
             return {"ui": {"moss_regional_lora": [summary]}, "result": (m, prompt, width, height, regions_with_canvas(regions, width, height))}
 
         specs = doc.loras

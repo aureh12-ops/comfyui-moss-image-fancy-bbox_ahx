@@ -17,7 +17,8 @@ const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
 const require = createRequire(import.meta.url);
 let chromium;
 try {
-  ({ chromium } = require("playwright"));
+  // fork (ahx): playwright-core with an installed browser works too (PW_CHANNEL=chrome or msedge)
+  ({ chromium } = (() => { try { return require("playwright"); } catch { return require("playwright-core"); } })());
 } catch {
   console.log("SKIP: playwright not available");
   process.exit(0);
@@ -34,7 +35,13 @@ export const api = {
     json: async () => path === "/models/loras" ? ["alice.safetensors", "bob.safetensors", "${SLIDER}"] : ["ref.png [input]"],
   }),
   apiURL: (p) => "/missing" + p,
-};`;
+  // ComfyUI's api is an EventTarget ("executed", ...): fork (ahx), for "Use the last generated image"
+  addEventListener: (...a) => events.addEventListener(...a),
+  removeEventListener: (...a) => events.removeEventListener(...a),
+  dispatchEvent: (e) => events.dispatchEvent(e),
+};
+const events = new EventTarget();
+window.__api = api;`;
 const PAGE = `<!doctype html><html><body style="margin:0;background:#111">
 <textarea id="raw" style="width:1180px;height:90px"></textarea>
 <div id="host" style="width:1180px;height:700px"></div>
@@ -129,7 +136,7 @@ const server = createServer((req, res) => {
 await new Promise((r) => server.listen(0, r));
 const base = `http://127.0.0.1:${server.address().port}/`;
 
-const browser = await chromium.launch();
+const browser = await chromium.launch(process.env.PW_CHANNEL ? { channel: process.env.PW_CHANNEL } : {});
 const page = await browser.newPage({ viewport: { width: 1200, height: 820 }, deviceScaleFactor: 2 });
 const errors = [];
 page.on("pageerror", (e) => errors.push(String(e)));
@@ -250,6 +257,30 @@ await page.waitForFunction(() => document.querySelector(".mrl-props textarea.mrl
 if (process.argv[4]) await page.screenshot({ path: process.argv[4] });
 console.log("canvas settings ok");
 
+// fork (ahx): the drawing-aid image is called "Background"; "Use the last generated image" (clicking its words
+// ticks it) follows the image a Save Image after this node saved, from ComfyUI's "executed" event, and
+// ignores images saved by nodes that aren't downstream of this one
+assert.equal(await page.locator(".mrl-props .mrl-field > span:first-child", { hasText: /^Background$/ }).count(), 1);
+const lastRow = page.locator(".mrl-props .mrl-field", { hasText: "Use the last generated image" });
+await lastRow.getByText("Use the last generated image", { exact: true }).click();
+assert.equal(JSON.parse(await page.locator("#raw").inputValue()).editor.reference_follow, true);
+await page.evaluate(() => {
+  // this node (1) -> KSampler (2) -> Save Image (3); an unrelated Save Image (9)
+  const nodes = { 1: window.node, 2: { id: 2, outputs: [{ links: [802] }] }, 3: { id: 3, outputs: [] }, 9: { id: 9, outputs: [] } };
+  window.node.id = 1;
+  window.node.outputs = [{ links: [801] }];
+  window.__app.graph.getNodeById = (id) => nodes[id];
+  window.__app.graph.links = { 801: { target_id: 2 }, 802: { target_id: 3 } };
+  const saved = (node, filename) => window.__api.dispatchEvent(new CustomEvent("executed", { detail: { node: String(node), output: { images: [{ filename, subfolder: "runs", type: "output" }] } } }));
+  saved(3, "last.png");
+  saved(9, "other.png"); // later, but not made from these boxes: ignored
+});
+assert.equal(JSON.parse(await page.locator("#raw").inputValue()).editor.reference_image, "runs/last.png");
+assert.equal(await page.locator(".mrl-props .mrl-field", { hasText: "Background" }).locator('input[type="text"]').isDisabled(), true);
+await lastRow.locator("input").uncheck();
+assert.equal(JSON.parse(await page.locator("#raw").inputValue()).editor.reference_follow, false);
+console.log("background / last generated image ok");
+
 // 5c. Edit JSON: invalid text is refused with a message, valid text replaces the boxes (undoable)
 const before = await page.locator("#raw").inputValue();
 await page.locator(".mrl-props button", { hasText: "Edit JSON" }).click();
@@ -316,7 +347,7 @@ assert.ok(grown > tb.height + 30, `caption box resized: ${tb.height} -> ${grown}
 const layoutGrown = await page.locator(".mrl-props textarea").first().evaluate((e) => e.offsetHeight);
 const rows = page.locator(".mrl-layers .mrl-row");
 assert.ok((await rows.count()) >= 2);
-await rows.nth(1).click();
+await rows.filter({ hasText: /\S/, hasNotText: "Alice" }).first().click();
 assert.doesNotMatch(await propsTitle(), /Alice/);
 assert.equal(await page.locator(".mrl-props textarea").first().evaluate((e) => e.offsetHeight), layoutGrown);
 await page.locator(".mrl-layers .mrl-row", { hasText: "Alice" }).click();
@@ -374,12 +405,39 @@ console.log("curve editing ok");
 // 11. remove a LoRA; reorder boxes with the layer buttons
 await page.locator(".mrl-lora-row .mrl-lora-remove").nth(0).click();
 assert.deepEqual((await json()).regions[0].loras.map((e) => e.lora), ["bob.safetensors"]);
-await page.locator(".mrl-layers .mrl-row", { hasText: "Bob" }).locator('button[title^="Move up"]').click();
+// fork (ahx): the panel lists the front first, so "Move down" sends Bob toward the back (earlier in the list)
+await page.locator(".mrl-layers .mrl-row", { hasText: "Bob" }).locator('button[title^="Move down"]').click();
 // the eye toggle hides a box (and it is then left out of the output)
 await page.locator(".mrl-layers .mrl-row", { hasText: "Alice" }).locator(".mrl-vis").click();
 assert.equal((await json()).regions[1].visible, false);
 assert.deepEqual((await json()).regions.map((r) => r.name), ["Bob", "Alice"]);
+const shownOrder = () => page.$$eval(".mrl-layers .mrl-row .mrl-name", (els) => els.map((e) => e.textContent));
+assert.deepEqual(await shownOrder(), ["Alice", "Bob"], "front (last in the list) shown first");
+assert.match(await page.locator(".mrl-layers .mrl-panel-head").innerText(), /front/);
+assert.match(await page.locator(".mrl-layers .mrl-row").last().innerText(), /background/);
 console.log("reorder ok");
+
+// fork (ahx): drag a layer row by its name (not only the grip) onto another row to reorder it; the drag
+// leaves the selection alone, and a press that doesn't move is still a click that selects
+const rowBox = (name) => page.locator(".mrl-layers .mrl-row", { hasText: name }).boundingBox();
+const selectedRows = () => page.$$eval(".mrl-layers .mrl-row.sel .mrl-name", (els) => els.map((e) => e.textContent));
+const selBefore = await selectedRows();
+// drag Bob (bottom row, the back) above Alice: Bob comes to the front, i.e. last in the regions list
+const from = await page.locator(".mrl-layers .mrl-row", { hasText: "Bob" }).locator(".mrl-name").boundingBox();
+const onto = await rowBox("Alice");
+await page.mouse.move(from.x + from.width / 2, from.y + from.height / 2);
+await page.mouse.down();
+await page.mouse.move(from.x + from.width / 2, onto.y + onto.height / 3, { steps: 8 });
+assert.equal(await page.locator(".mrl-layers .drop-before").count(), 1, "drop marker shown while dragging");
+await page.mouse.up();
+assert.deepEqual((await json()).regions.map((r) => r.name), ["Alice", "Bob"]);
+assert.deepEqual(await shownOrder(), ["Bob", "Alice"]);
+assert.deepEqual(await selectedRows(), selBefore, "a drag doesn't change the selection");
+assert.equal(await page.locator(".mrl-layers .drop-before").count(), 0);
+const bob = await rowBox("Bob");
+await page.mouse.click(bob.x + bob.width / 2, bob.y + bob.height / 2);
+assert.deepEqual(await selectedRows(), ["Bob"], "a click still selects");
+console.log("drag reorder ok");
 
 // 12. parse error: visible error state, and nothing done in the editor overwrites the text
 const broken = '{"version": 2, "regions": [ {"name": "oops"';
