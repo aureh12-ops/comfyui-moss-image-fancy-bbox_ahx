@@ -29,7 +29,7 @@ const BRUSH_TOOLS = ["add", "sub", "erase"];
 const PAINT_TOOLS = [...BRUSH_TOOLS, "wand"];
 const ADD_RGB = "#ffffff";
 
-const NODE_NAME = "MossCharacterMasks";
+const NODE_NAME = "MossCharacterMasks_ahx"; // fork (ahx): own node ID, see FORK_SUFFIX in node.py
 const EDITOR_WIDGET = "masks_editor";
 const UI_KEY = "moss_character_masks";
 const POLL_MS = 250;
@@ -106,10 +106,10 @@ const CSS = `
 
 function injectMasksCss() {
   injectCss();
-  let s = document.getElementById("mcm-css");
+  let s = document.getElementById("mcm-css-ahx");
   if (!s) {
     s = document.createElement("style");
-    s.id = "mcm-css";
+    s.id = "mcm-css-ahx";
     document.head.appendChild(s);
   }
   s.textContent = CSS;
@@ -1096,7 +1096,7 @@ class MasksEditor {
 }
 
 app.registerExtension({
-  name: "moss.CharacterMasksEditor",
+  name: "moss.CharacterMasksEditor_ahx",
   async beforeRegisterNodeDef(nodeType, nodeData) {
     if (nodeData?.name !== NODE_NAME) return;
 

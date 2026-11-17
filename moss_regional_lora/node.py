@@ -274,3 +274,10 @@ NODE_DISPLAY_NAME_MAPPINGS = {"MossRegionalLora": "MOSS-Image Regional LoRA + La
                               "MossLayoutDiscovery": "MOSS-Image Layout Discovery",
                               "MossCharacterMasks": "MOSS-Image Character Masks",
                               "MossRegionalDetailer": "MOSS-Image Regional Detailer"}
+
+# Fork (ahx): register every node under its own ID ("MossRegionalLora_ahx", ...) and label ("... (ahx)"), so this
+# copy can run next to the original csywtf/comfyui-moss-image-fancy-bbox in the same ComfyUI. The web/*.js
+# NODE_NAME constants must carry the same suffix. Kept apart from the mappings above so upstream merges stay clean.
+FORK_SUFFIX, FORK_LABEL = "_ahx", " (ahx)"
+NODE_CLASS_MAPPINGS = {k + FORK_SUFFIX: v for k, v in NODE_CLASS_MAPPINGS.items()}
+NODE_DISPLAY_NAME_MAPPINGS = {k + FORK_SUFFIX: v + FORK_LABEL for k, v in NODE_DISPLAY_NAME_MAPPINGS.items()}

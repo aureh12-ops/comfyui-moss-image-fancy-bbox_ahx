@@ -3,10 +3,10 @@
 
 import { app } from "../../scripts/app.js";
 
-const NODE_NAME = "MossLayoutDiscovery";
+const NODE_NAME = "MossLayoutDiscovery_ahx"; // fork (ahx): own node ID, see FORK_SUFFIX in node.py
 
 app.registerExtension({
-  name: "moss.LayoutDiscoveryReport",
+  name: "moss.LayoutDiscoveryReport_ahx",
   async beforeRegisterNodeDef(nodeType, nodeData) {
     if (nodeData?.name !== NODE_NAME) return;
 

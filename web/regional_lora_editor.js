@@ -21,7 +21,7 @@ import { icon } from "./icons.js";
 import { dropRemovedGridValues } from "./migrate.js";
 import { Viewport, frameRect, installKeySink, installPanZoom, isKeySink, trackSize, zoomInFactor, zoomOutFactor } from "./viewport.js";
 
-const NODE_NAME = "MossRegionalLora";
+const NODE_NAME = "MossRegionalLora_ahx"; // fork (ahx): own node ID, see FORK_SUFFIX in node.py
 const EDITOR_WIDGET = "region_editor";
 const SIZE_STEP = 16; // the width/height widgets' step: whole MOSS-Image latent cells
 // Settings edited in the Canvas panel: [widget name, label, kind]. "Advanced" ones sit in a collapsed group.
@@ -148,10 +148,10 @@ const CSS = `
 `;
 
 export function injectCss() {
-  let s = document.getElementById("mrl-css");
+  let s = document.getElementById("mrl-css-ahx");
   if (!s) {
     s = document.createElement("style");
-    s.id = "mrl-css";
+    s.id = "mrl-css-ahx";
     document.head.appendChild(s);
   }
   s.textContent = CSS;
@@ -1553,7 +1553,7 @@ export function hideWidget(w) {
 }
 
 app.registerExtension({
-  name: "moss.RegionalLoraEditor",
+  name: "moss.RegionalLoraEditor_ahx",
   async beforeRegisterNodeDef(nodeType, nodeData) {
     if (nodeData?.name !== NODE_NAME) return;
 

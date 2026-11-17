@@ -356,7 +356,7 @@ def test_advanced_options_declared(fake_comfy):
     for name, default in (("text_position", "suffix"), ("image_order", "raster"), ("source_tokens", "end")):
         choices, spec = opt[name]
         assert choices[0] == "not set" and spec["default"] == default and spec["advanced"] is True
-    assert "MossLayoutDiscovery" in node.NODE_CLASS_MAPPINGS
+    assert "MossLayoutDiscovery_ahx" in node.NODE_CLASS_MAPPINGS
 
 
 def test_measured_layout_defaults_apply_without_options(fake_comfy):

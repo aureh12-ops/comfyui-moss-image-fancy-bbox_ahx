@@ -341,8 +341,8 @@ def test_node_with_nothing_to_detail_passes_the_image_through(fake_comfy):
 
 def test_node_is_registered():
     from moss_regional_lora import node
-    cls = node.NODE_CLASS_MAPPINGS["MossRegionalDetailer"]
-    assert node.NODE_DISPLAY_NAME_MAPPINGS["MossRegionalDetailer"] == "MOSS-Image Regional Detailer"
+    cls = node.NODE_CLASS_MAPPINGS["MossRegionalDetailer_ahx"]
+    assert node.NODE_DISPLAY_NAME_MAPPINGS["MossRegionalDetailer_ahx"] == "MOSS-Image Regional Detailer (ahx)"
     req, opt = cls.INPUT_TYPES()["required"], cls.INPUT_TYPES()["optional"]
     assert req["character_masks"][0] == "MOSS_CHARACTER_MASKS" and "stop_before_detailing" in req
     assert opt["negative"][0] == "CONDITIONING" and cls.RETURN_TYPES == ("IMAGE", "IMAGE")

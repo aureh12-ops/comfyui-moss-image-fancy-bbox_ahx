@@ -51,7 +51,7 @@ const PAGE = `<!doctype html><html><body style="margin:0;background:#111">
 import "/scripts/app.js";
 const app = window.__app;
 await import("/extensions/moss/character_masks.js");
-const ext = app.exts.find((e) => e.name === "moss.CharacterMasksEditor");
+const ext = app.exts.find((e) => e.name === "moss.CharacterMasksEditor_ahx");
 const main = { widgets: [
   { name: "width", value: 200 }, { name: "height", value: 100 },
   { name: "regions", value: ${JSON.stringify(JSON.stringify(REGIONS))} },
@@ -84,7 +84,7 @@ Node.prototype.addDOMWidget = function (name, type, element) {
 };
 Node.prototype.setSize = function (s) { this.size = s; };
 Node.prototype.setDirtyCanvas = function () {};
-await ext.beforeRegisterNodeDef(Node, { name: "MossCharacterMasks" });
+await ext.beforeRegisterNodeDef(Node, { name: "MossCharacterMasks_ahx" });
 window.node = new Node();
 window.node.onNodeCreated();
 

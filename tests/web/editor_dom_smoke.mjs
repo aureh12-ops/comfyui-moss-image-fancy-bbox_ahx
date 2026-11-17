@@ -69,7 +69,7 @@ Node.prototype.addDOMWidget = function (name, type, element) {
 Node.prototype.setSize = function (s) { this.size = s; };
 Node.prototype.setDirtyCanvas = function () {};
 Node.prototype.configure = function (info) { this.configuredWith = info.widgets_values; };   // LGraphNode's
-await ext.beforeRegisterNodeDef(Node, { name: "MossRegionalLora" });
+await ext.beforeRegisterNodeDef(Node, { name: "MossRegionalLora_ahx" });
 window.node = new Node();
 window.node.onNodeCreated();
 // ComfyUI stand-ins (frontend 1.58): its node container forwards the wheel to the graph unless the pointer

@@ -546,9 +546,9 @@ def test_node_outputs_and_editor_payload(fake_sam3, monkeypatch, tmp_path):
 
 def test_node_is_registered():
     from moss_regional_lora import node
-    assert node.NODE_CLASS_MAPPINGS["MossCharacterMasks"].__name__ == "MossCharacterMasks"
-    assert node.NODE_CLASS_MAPPINGS["MossCharacterMasks"].OUTPUT_NODE is True
-    assert node.NODE_DISPLAY_NAME_MAPPINGS["MossCharacterMasks"] == "MOSS-Image Character Masks"
+    assert node.NODE_CLASS_MAPPINGS["MossCharacterMasks_ahx"].__name__ == "MossCharacterMasks"
+    assert node.NODE_CLASS_MAPPINGS["MossCharacterMasks_ahx"].OUTPUT_NODE is True
+    assert node.NODE_DISPLAY_NAME_MAPPINGS["MossCharacterMasks_ahx"] == "MOSS-Image Character Masks (ahx)"
 
 
 def test_detail_resolution_matches_the_editor():
