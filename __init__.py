@@ -4,5 +4,8 @@ WEB_DIRECTORY = "./web"
 
 if __package__:  # ComfyUI imports this directory as a package; test runners may import the file bare
     from .moss_regional_lora.node import NODE_CLASS_MAPPINGS, NODE_DISPLAY_NAME_MAPPINGS
+    from .moss_regional_lora import output_files
+
+    output_files.register()   # fork (ahx): the Background list's subfolder-aware image list
 
     __all__ = ["NODE_CLASS_MAPPINGS", "NODE_DISPLAY_NAME_MAPPINGS", "WEB_DIRECTORY"]

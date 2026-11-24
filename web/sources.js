@@ -70,15 +70,6 @@ export function downstreamIds(start, getNode, getLink) {
   return seen;
 }
 
-/** File names from ComfyUI's /internal/files/<type> list ("name.png [output]"), without the annotation. */
-export function stripAnnotations(list, type) {
-  const tail = ` [${type}]`;
-  return (Array.isArray(list) ? list : []).map((x) => {
-    const s = String(x);
-    return s.endsWith(tail) ? s.slice(0, -tail.length) : s;
-  });
-}
-
 /** The image a Load Image style node (a string widget named "image"; files in input/ unless annotated) shows
  * without running; null for other nodes, whose image only exists after a run. */
 export function imageWidgetRef(src) {

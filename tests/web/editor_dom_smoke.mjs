@@ -32,7 +32,8 @@ const API_STUB = `
 export const api = {
   fetchApi: async (path) => ({
     ok: true,
-    json: async () => path === "/models/loras" ? ["alice.safetensors", "bob.safetensors", "${SLIDER}"] : ["ref.png [input]"],
+    json: async () => path === "/models/loras" ? ["alice.safetensors", "bob.safetensors", "${SLIDER}"]
+      : path === "/moss_regional_ahx/output_images" ? ["moss-image/new.png", "old.png"] : ["ref.png [input]"],
   }),
   apiURL: (p) => "/missing" + p,
   // ComfyUI's api is an EventTarget ("executed", ...): fork (ahx), for "Use the last generated image"
@@ -279,6 +280,13 @@ assert.equal(JSON.parse(await page.locator("#raw").inputValue()).editor.referenc
 assert.equal(await page.locator(".mrl-props .mrl-field", { hasText: "Background" }).locator('input[type="text"]').isDisabled(), true);
 await lastRow.locator("input").uncheck();
 assert.equal(JSON.parse(await page.locator("#raw").inputValue()).editor.reference_follow, false);
+// the Background list: the output folder's images, subfolders included (output_files.py)
+const bgInput = page.locator(".mrl-props .mrl-field", { hasText: "Background" }).locator('input[type="text"]');
+await bgInput.focus();
+await bgInput.evaluate((e) => new Promise((done) => {
+  const check = () => ([...(e.list?.options || [])].map((o) => o.value).join() === "moss-image/new.png,old.png" ? done() : setTimeout(check, 20));
+  check();
+}));
 console.log("background / last generated image ok");
 
 // 5c. Edit JSON: invalid text is refused with a message, valid text replaces the boxes (undoable)

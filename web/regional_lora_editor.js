@@ -20,7 +20,7 @@ import { CurvePanel, drawSparkline } from "./curve_panel.js";
 import { icon } from "./icons.js";
 import { dropRemovedGridValues } from "./migrate.js";
 import { Viewport, frameRect, installKeySink, installPanZoom, isKeySink, trackSize, zoomInFactor, zoomOutFactor } from "./viewport.js";
-import { canvasSide, downstreamIds, imageRefValue, imageWidgetRef, liveNumber, parseImageRef, savedImageRef, stripAnnotations, uploadedRefName, viewPath } from "./sources.js";
+import { canvasSide, downstreamIds, imageRefValue, imageWidgetRef, liveNumber, parseImageRef, savedImageRef, uploadedRefName, viewPath } from "./sources.js";
 
 const NODE_NAME = "MossRegionalLora_ahx"; // fork (ahx): own node ID, see FORK_SUFFIX in node.py
 const EDITOR_WIDGET = "region_editor";
@@ -227,12 +227,13 @@ export function loraList() {
   return loraListPromise.p;
 }
 
-// Fork (ahx): the Background file list is ComfyUI's output folder (newest first), not input.
+// Fork (ahx): the Background file list is ComfyUI's output folder, subfolders included, newest first
+// (moss_regional_lora/output_files.py).
 function outputFileList() {
   return api
-    .fetchApi("/internal/files/output")
+    .fetchApi("/moss_regional_ahx/output_images")
     .then((r) => (r.ok ? r.json() : []))
-    .then((list) => stripAnnotations(list, "output"))
+    .then((list) => (Array.isArray(list) ? list : []))
     .catch(() => []);
 }
 

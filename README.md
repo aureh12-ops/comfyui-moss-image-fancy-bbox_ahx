@@ -156,8 +156,8 @@ JSON, to fix it); it never overwrites the text.
   (editable), group, layout-prompt fields, and its **LoRA list**. With nothing selected it shows the
   **Canvas** panel: image size (with a swap button), caption, strict, a collapsed *Advanced* group,
   **Edit JSON**, and drawing aids: grid, snap, and an optional **Background** image (a drawing aid only)
-  with an opacity slider. The background is a file from ComfyUI's `output` folder (newest first;
-  `sub/name.png` for a subfolder, ` [input]` after the name for the input folder), any image on your
+  with an opacity slider. The background is a file from ComfyUI's `output` folder (newest first,
+  subfolders included as `sub/name.png`; ` [input]` after the name for the input folder), any image on your
   computer through the folder button (copied to ComfyUI's `input` folder, like a *Load Image* upload), or
   the image connected to the `background` input. **Use the last generated image** shows, after each run,
   the last image saved after this node (by a *Save Image* it feeds, directly or through other nodes): the

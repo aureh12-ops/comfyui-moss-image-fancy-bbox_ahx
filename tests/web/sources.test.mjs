@@ -1,7 +1,7 @@
 // Fork (ahx): the region editor's Reference / background / size sources (web/sources.js).
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { canvasSide, downstreamIds, imageRefValue, imageWidgetRef, liveNumber, parseImageRef, resolutionSelectorSize, savedImageRef, stripAnnotations, uploadedRefName, viewPath } from "../../web/sources.js";
+import { canvasSide, downstreamIds, imageRefValue, imageWidgetRef, liveNumber, parseImageRef, resolutionSelectorSize, savedImageRef, uploadedRefName, viewPath } from "../../web/sources.js";
 import * as S from "../../web/state.js";
 
 test("Follow last image takes the first saved image of a node's output, never a preview", () => {
@@ -91,11 +91,6 @@ test("empty or non-string names give no reference", () => {
 test("the /view path escapes every part", () => {
   assert.equal(viewPath({ filename: "a b&c.png", subfolder: "d/e", type: "output" }), "/view?filename=a%20b%26c.png&type=output&subfolder=d%2Fe");
   assert.equal(viewPath({ filename: "x.png", subfolder: "", type: "temp" }), "/view?filename=x.png&type=temp&subfolder=");
-});
-
-test("ComfyUI's file list loses its annotations", () => {
-  assert.deepEqual(stripAnnotations(["b.png [output]", "a.png [output]", "odd"], "output"), ["b.png", "a.png", "odd"]);
-  assert.deepEqual(stripAnnotations(null, "output"), []);
 });
 
 test("a Load Image node's file is shown live; other sources only after a run", () => {
