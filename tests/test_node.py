@@ -414,13 +414,27 @@ EMPTY = json.dumps({"version": 2, "regions": []})
 
 
 def test_size_sockets_are_sockets_after_the_widgets(fake_comfy):
-    """width_input / height_input / background are sockets (no widget), so saved widget values keep their places."""
+    """width_input / height_input / background / caption_input are sockets (no widget), so saved widget values
+    keep their places."""
     _, node = fake_comfy
     opt = node.MossRegionalLora.INPUT_TYPES()["optional"]
-    assert list(opt)[-3:] == ["width_input", "height_input", "background"]
+    assert list(opt)[-4:] == ["width_input", "height_input", "background", "caption_input"]
     for name in ("width_input", "height_input"):
         assert opt[name][0] == "INT" and opt[name][1]["forceInput"] is True
     assert opt["background"][0] == "IMAGE"
+    assert opt["caption_input"][0] == "STRING" and opt["caption_input"][1]["forceInput"] is True
+
+
+def test_caption_socket_replaces_the_editor_caption(fake_comfy):
+    """A connected caption replaces the editor's in the layout prompt and is reported to the editor."""
+    patcher, node = fake_comfy
+    regions = json.dumps({"version": 1, "regions": [prompt_box()]})
+    out = apply(node, patcher, regions, caption="from the editor", caption_input="from a text node")
+    assert json.loads(out["result"][1])["summary"] == {"caption": "from a text node"}
+    assert out["ui"]["moss_regional_lora"][0]["caption"] == "from a text node"
+    out = apply(node, patcher, regions, caption="from the editor")
+    assert json.loads(out["result"][1])["summary"] == {"caption": "from the editor"}
+    assert "caption" not in out["ui"]["moss_regional_lora"][0]
 
 
 def test_size_sockets_replace_the_editor_size(fake_comfy, monkeypatch):

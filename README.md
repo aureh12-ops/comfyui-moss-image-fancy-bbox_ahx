@@ -10,7 +10,8 @@
 - **Runs next to the original.** Every node has its own ID and an "(ahx)" label (`MossRegionalLora_ahx`,
   …), so both versions can be installed in the same ComfyUI. Workflows saved with the original nodes
   don't load into these; add the "(ahx)" nodes instead.
-- **Canvas size from another node:** optional `width_input` / `height_input` sockets.
+- **Canvas size and caption from other nodes:** optional `width_input` / `height_input` and `caption_input`
+  sockets.
 - **Background** (the drawing aid that was called *reference*): picked from ComfyUI's `output` folder or
   anywhere on your computer, fed by an optional `background` image socket, or **Use the last generated
   image** to draw over the previous result.
@@ -99,6 +100,9 @@ Optional inputs (this fork, *ahx*):
   *Load Image* or *Load Image (from Outputs)* node it shows right away; from any other node, after a run.
   A drawing aid only, it never affects the output, but like any input, changing the image re-runs this
   node and everything after it.
+- `caption_input`: the whole-image caption from another node (a text, prompt or LLM node). It replaces the
+  caption set in the Canvas panel, which then shows it read-only (live from a *String* primitive,
+  otherwise after each run). Box captions still come from the boxes.
 
 Settings: all of them are in the editor's **Canvas** panel (shown when no box is selected). On the
 node they are ordinary inputs that the editor hides, so they are saved with the workflow and sent

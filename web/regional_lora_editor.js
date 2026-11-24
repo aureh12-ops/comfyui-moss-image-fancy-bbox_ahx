@@ -20,7 +20,7 @@ import { CurvePanel, drawSparkline } from "./curve_panel.js";
 import { icon } from "./icons.js";
 import { dropRemovedGridValues } from "./migrate.js";
 import { Viewport, frameRect, installKeySink, installPanZoom, isKeySink, trackSize, zoomInFactor, zoomOutFactor } from "./viewport.js";
-import { canvasSide, downstreamIds, imageRefValue, imageWidgetRef, liveNumber, parseImageRef, savedImageRef, uploadedRefName, viewPath } from "./sources.js";
+import { canvasSide, downstreamIds, imageRefValue, imageWidgetRef, liveNumber, liveText, parseImageRef, savedImageRef, uploadedRefName, viewPath } from "./sources.js";
 
 const NODE_NAME = "MossRegionalLora_ahx"; // fork (ahx): own node ID, see FORK_SUFFIX in node.py
 const EDITOR_WIDGET = "region_editor";
@@ -501,12 +501,19 @@ class RegionEditor {
   }
 
   /** Fork (ahx): a canvas side; from width_input / height_input when wired: live from a primitive or a
-   * Resolution Selector, else the size the last run wrote into the hidden widget (setStatus). */
+   * Resolution Selector, else the size of the last run (setStatus). */
   canvasSideValue(name, w) {
     const own = Math.max(1, Math.round(Number(w?.value) || 1024));
     const src = inputSource(this.node, `${name}_input`);
     const live = src ? liveNumber(src.node, src.slot) : null;
-    return live != null ? canvasSide(live) : own;
+    if (live != null) return canvasSide(live);
+    return src && Number.isFinite(this.ran?.[name]) ? this.ran[name] : own;
+  }
+
+  /** Fork (ahx): the caption from caption_input: live from a text primitive, else the last run's, else null. */
+  linkedCaption() {
+    const src = inputSource(this.node, "caption_input");
+    return src ? liveText(src.node) ?? this.ran?.caption ?? null : null;
   }
 
   /** Fork (ahx): whether a size comes from another node (its socket or its hidden widget's input). */
@@ -531,8 +538,8 @@ class RegionEditor {
     // only while it is not being typed in, so typing keeps its focus
     if (document.activeElement !== this.captionInput) this.captionSeen = this.wCaption?.value;
     const settings = [...SETTINGS, ...ADVANCED].map(([n]) => this.widget(n)?.value).join(":");
-    const sockets = ["width_input", "height_input", "background"].map((n) => +this.socketLinked(n)).join("");
-    const d = `${W}x${H}:${settings}:${this.captionSeen}:${this.linkedNames().join(",")}:${sockets}`;
+    const sockets = ["width_input", "height_input", "background", "caption_input"].map((n) => +this.socketLinked(n)).join("");
+    const d = `${W}x${H}:${settings}:${this.captionSeen}:${this.linkedNames().join(",")}:${sockets}:${this.linkedCaption()}`;
     if (d !== this.lastDims) {
       this.lastDims = d;
       this.renderAll();
@@ -1382,7 +1389,13 @@ class RegionEditor {
     area.addEventListener("input", () => this.setWidget("caption", area.value));
     area.addEventListener("keydown", (e) => e.stopPropagation()); // typing is not an editor shortcut
     area.addEventListener("blur", () => this.poll());
-    if (this.linkedNames().includes("caption")) {
+    if (this.socketLinked("caption_input")) {
+      // Fork (ahx): a caption from the caption_input socket is shown, read-only
+      area.value = this.linkedCaption() ?? "";
+      area.placeholder = "From the node connected to caption_input (shown after a run)";
+      area.disabled = true;
+      area.title = "From the node connected to caption_input. Read live from a text primitive; otherwise updated after each run.";
+    } else if (this.linkedNames().includes("caption")) {
       area.disabled = true;
       area.title = "Connected to another node's output; that value is used.";
     }
@@ -1740,10 +1753,9 @@ class RegionEditor {
 
   setStatus(summary) {
     if (!summary) return;
-    // Fork (ahx): keep a socket-fed size in the hidden widget, so the canvas and saved workflow match the run
-    for (const name of ["width", "height"]) {
-      if (this.socketLinked(`${name}_input`) && Number.isFinite(summary[name])) this.setWidget(name, summary[name]);
-    }
+    // Fork (ahx): what the run used (a socket-fed size or caption), for display only: written into the hidden
+    // widgets it would change this node's inputs and re-run it, and the whole image, on the next queue
+    this.ran = { width: summary.width, height: summary.height, caption: summary.caption };
     this.lastBackground = summary.background || null;
     if (this.loadReference()) this.draw();
     const items = summary.prompt_items != null ? ` · ${summary.prompt_items} layout prompt item(s)` : "";

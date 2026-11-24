@@ -111,11 +111,20 @@ export function resolutionSelectorSize(src) {
 export function liveNumber(src, slot = 0) {
   if (!src) return null;
   if (src.type === "ResolutionSelector") return resolutionSelectorSize(src)?.[slot] ?? null;
-  let w = null;
-  if (src.type === "PrimitiveNode") w = src.widgets?.[0];
-  else if ((src.outputs || []).length === 1) w = src.widgets?.find?.((x) => x?.name === "value");
-  const v = w?.value;
+  const v = primitiveValue(src);
   return typeof v === "number" && Number.isFinite(v) ? v : null;
+}
+
+/** The text a primitive (PrimitiveNode, or a single-output node with a "value" widget such as String) sends;
+ * null when only a run knows it. */
+export function liveText(src) {
+  const v = src ? primitiveValue(src) : null;
+  return typeof v === "string" ? v : null;
+}
+
+function primitiveValue(src) {
+  if (src.type === "PrimitiveNode") return src.widgets?.[0]?.value;
+  return (src.outputs || []).length === 1 ? src.widgets?.find?.((x) => x?.name === "value")?.value : undefined;
 }
 
 /** A size from width_input / height_input as the node uses it: rounded down to whole 16 px cells, at least one. */

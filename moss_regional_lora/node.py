@@ -192,6 +192,10 @@ class MossRegionalLora:
                 "background": ("IMAGE", {"tooltip": "Optional drawing aid: an image shown behind the boxes in the "
                                                     "editor, in place of its Background file. Never affects the "
                                                     "output (but changing it re-runs this node and what follows)."}),
+                "caption_input": ("STRING", {"forceInput": True,
+                                             "tooltip": "Optional: the whole-image caption from another node (a "
+                                                        "text or prompt node). Replaces the caption set in the "
+                                                        "editor."}),
             },
         }
 
@@ -219,12 +223,13 @@ class MossRegionalLora:
 
     def apply(self, model, width, height, regions, ramp_start, ramp_end, steps,
               strict, caption="", text_position=None, image_order=None, source_tokens=None,
-              width_input=None, height_input=None, background=None):
+              width_input=None, height_input=None, background=None, caption_input=None):
         # an API prompt without these options gets the same defaults as the UI
         text_position = MEASURED_TEXT_POSITION if text_position is None else text_position
         image_order = MEASURED_IMAGE_ORDER if image_order is None else image_order
         source_tokens = MEASURED_SOURCE_TOKENS if source_tokens is None else source_tokens
         width, height = _canvas_side(width_input, width), _canvas_side(height_input, height)
+        caption = caption if caption_input is None else caption_input
         doc = parse_document(regions)
         for n in doc.notes:
             log.info("[MOSS Regional LoRA] %s", n)
@@ -236,10 +241,13 @@ class MossRegionalLora:
         def out(summary):
             summary.setdefault("prompt_items", len(doc.prompt_items))
             summary.setdefault("notes", doc.notes)
-            # for the editor: the canvas actually used, and the background to draw behind the boxes
+            # for the editor: the canvas actually used, the background to draw behind the boxes, and a
+            # caption that came from another node
             summary["width"], summary["height"] = width, height
             if background_ref:
                 summary["background"] = background_ref
+            if caption_input is not None:
+                summary["caption"] = caption
             return {"ui": {"moss_regional_lora": [summary]}, "result": (m, prompt, width, height, regions_with_canvas(regions, width, height))}
 
         specs = doc.loras

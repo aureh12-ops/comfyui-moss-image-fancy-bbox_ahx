@@ -1,7 +1,7 @@
 // Fork (ahx): the region editor's Reference / background / size sources (web/sources.js).
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { canvasSide, downstreamIds, imageRefValue, imageWidgetRef, liveNumber, parseImageRef, resolutionSelectorSize, savedImageRef, uploadedRefName, viewPath } from "../../web/sources.js";
+import { canvasSide, downstreamIds, imageRefValue, imageWidgetRef, liveNumber, liveText, parseImageRef, resolutionSelectorSize, savedImageRef, uploadedRefName, viewPath } from "../../web/sources.js";
 import * as S from "../../web/state.js";
 
 test("Follow last image takes the first saved image of a node's output, never a preview", () => {
@@ -109,6 +109,14 @@ test("a primitive's number is read live; computed sizes are not", () => {
   assert.equal(liveNumber({ type: "SomeResolution", outputs: [{}, {}], widgets: [{ name: "value", value: 5 }] }), null);
   assert.equal(liveNumber({ type: "PrimitiveInt", outputs: [{}], widgets: [{ name: "value", value: "12" }] }), null);
   assert.equal(liveNumber(null), null);
+});
+
+test("a text primitive's caption is read live; other text only after a run", () => {
+  assert.equal(liveText({ type: "PrimitiveNode", outputs: [{}], widgets: [{ name: "STRING", value: "a scene" }] }), "a scene");
+  assert.equal(liveText({ type: "PrimitiveStringMultiline", outputs: [{}], widgets: [{ name: "value", value: "two people" }] }), "two people");
+  assert.equal(liveText({ type: "PrimitiveInt", outputs: [{}], widgets: [{ name: "value", value: 3 }] }), null);
+  assert.equal(liveText({ type: "SomePromptWriter", outputs: [{}, {}], widgets: [{ name: "value", value: "x" }] }), null);
+  assert.equal(liveText(null), null);
 });
 
 test("sizes from a socket round down to whole 16 px cells, like the node", () => {
