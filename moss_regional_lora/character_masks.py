@@ -8,8 +8,8 @@ For every visible box with Detail on:
    and stray specks removed.
 2. **Paint and ownership**: pixels the user painted + on a box's Character layer (an arm across the
    other character) are added to its outline and are its own, whatever the layer order; pixels painted
-   - are removed from it. Otherwise every pixel inside some outline belongs to the topmost box (last in
-   the layer list) whose outline covers it.
+   - are removed from it. Otherwise every pixel inside some outline belongs to the topmost box (higher in
+   the layer panel, later in the regions) whose outline covers it.
 3. **Parts**: on a crop around the box and outline, with every other character's pixels greyed out (so
    SAM3 can only find this character's face, not a neighbour's), SAM3 finds each ticked part by text
    ("face", "eye", ...); each mask is kept inside the detector's box for it (so a face stops at the chin
