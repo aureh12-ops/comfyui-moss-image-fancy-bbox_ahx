@@ -1,5 +1,26 @@
 # MOSS-Image Regional LoRA + Layout Prompt (ComfyUI custom node)
 
+> **This is a fork** of [csywtf/comfyui-moss-image-fancy-bbox](https://github.com/csywtf/comfyui-moss-image-fancy-bbox)
+> by Casey ([csywtf](https://github.com/csywtf)). All credit for the nodes, the region editor and the
+> research behind them goes to the original author. Thank you! This fork adds a few editor features
+> and can be installed next to the original.
+
+## What this fork changes
+
+- **Runs next to the original.** Every node has its own ID and an "(ahx)" label (`MossRegionalLora_ahx`,
+  …), so both versions can be installed in the same ComfyUI. Workflows saved with the original nodes
+  don't load into these; add the "(ahx)" nodes instead.
+- **Canvas size from another node:** optional `width_input` / `height_input` sockets.
+- **Background** (the drawing aid that was called *reference*): picked from ComfyUI's `output` folder or
+  anywhere on your computer, fed by an optional `background` image socket, or **Use the last generated
+  image** to draw over the previous result.
+- **Layer panel:** the top row is in front and the bottom row is the background, and rows reorder by
+  dragging.
+- **Sample workflow:** [`workflows/MOSS-Image Regional LoRA - all nodes (ahx).json`](workflows/) uses
+  every node, with a note listing each model file and its folder.
+
+The sections below cover these in detail.
+
 One node to draw the boxes of a MOSS-Image generation. Each box can carry:
 
 - a **layout-prompt item**: a label (object, character or text), a caption, text to render and a
@@ -34,7 +55,7 @@ cd ComfyUI/custom_nodes
 ```
 
 ```bash
-git clone https://github.com/csywtf/comfyui-moss-image-fancy-bbox.git
+git clone https://github.com/aureh12-ops/comfyui-moss-image-fancy-bbox_ahx.git
 ```
 
 There are no dependencies beyond ComfyUI itself. The editor's icons are a small bundled subset of
@@ -166,7 +187,7 @@ JSON, to fix it); it never overwrites the text.
 
 **Caching:** queueing sends the backend only what affects the image (box positions and order, labels,
 captions, text, palettes, LoRAs and curves; hidden boxes are left out). Names, colours, locks, groups
-and the grid / reference-image settings stay in the workflow but aren't sent, so changing them doesn't
+and the grid / background settings stay in the workflow but aren't sent, so changing them doesn't
 regenerate the image.
 
 Boxes are stored as `[y_min, x_min, y_max, x_max]`, integer pixels, measured from the canvas centre
